@@ -1,0 +1,11 @@
+# Solidity / Foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+contracts/dependencies/
+contracts/deployments/
+
+# Rust / Cargo
+prover/target/
+prover/**/proofs/
+**/*.rs.bk

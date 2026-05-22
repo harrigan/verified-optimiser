@@ -1,0 +1,39 @@
+[dependencies]
+forge-std = "1.15.0"
+ds-test = { version = "1.0.0", git = "https://github.com/dapphub/ds-test.git", tag = "master" }
+risc0-risc0-ethereum = "3.0.1"
+"@openzeppelin-contracts" = "5.6.1"
+
+[profile.default]
+src = "src"
+out = "out"
+test = "src"
+script = "src"
+libs = ["dependencies"]
+solc = "0.8.27"
+via_ir = true
+remappings = [
+    "@forge-std/=dependencies/forge-std-1.15.0/src/",
+    "forge-std/=dependencies/forge-std-1.15.0/src/",
+    "@ds-test/=dependencies/ds-test-1.0.0/src/",
+    "ds-test/=dependencies/ds-test-1.0.0/src/",
+    "@openzeppelin/=dependencies/@openzeppelin-contracts-5.6.1/",
+    "openzeppelin/contracts/=dependencies/@openzeppelin-contracts-5.6.1/",
+    "risc0/=dependencies/risc0-risc0-ethereum-3.0.1/contracts/src/",
+    "@verified-optimiser/=src/verified-optimiser/",
+]
+fs_permissions = [
+    { access = "read", path = "src/" },
+    { access = "read", path = "benchmark-fixtures/" },
+    { access = "read", path = "../prover/" },
+]
+
+[profile.optimised]
+optimizer = true
+optimizer_runs = 200
+
+[rpc_endpoints]
+local = "${RPC_URL}"
+
+[soldeer]
+remappings_generate = false

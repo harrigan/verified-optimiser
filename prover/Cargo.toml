@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = [
+    "src/crossing-counter-zk/host",
+    "src/crossing-counter-zk/methods",
+    "src/crossing-counter-zk-steel/host",
+    "src/crossing-counter-zk-steel/methods",
+    "src/verified-optimiser-zk-steel/host",
+    "src/verified-optimiser-zk-steel/methods",
+    "src/verified-optimiser-zk-steel/shared",
+]
+
+# Always optimise; the zkVM guest build is much slower without it.
+[profile.dev]
+opt-level = 3
+
+[profile.release]
+debug = 1
+lto = true
