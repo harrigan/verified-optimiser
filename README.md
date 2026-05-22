@@ -54,3 +54,9 @@ toolchain](https://dev.risczero.com/api/zkvm/install)):
 cd prover
 cargo build --release
 ```
+
+## Copyright
+
+© 2026 Martin Harrigan.
+
+All Rights Reserved.
