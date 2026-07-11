@@ -66,6 +66,8 @@ contract CoordinatorTest is Test {
         bytes32 h = _commitHash(problemId, vars, salt);
         vm.prank(sender);
         coordinator.commit(h);
+        // Reveals must occur in a strictly later block than the commit.
+        vm.roll(block.number + 1);
     }
 
     // registerProblem
@@ -110,9 +112,25 @@ contract CoordinatorTest is Test {
 
         _commitAs(bob, 0, vars, salt);
 
-        (bytes32 ch, bool revealed) = coordinator.commitments(bob);
+        (bytes32 ch, uint64 blockNumber, bool revealed) = coordinator.commitments(bob);
         assertEq(ch, _commitHash(0, vars, salt));
+        assertEq(blockNumber, uint64(block.number - 1));
         assertFalse(revealed);
+    }
+
+    function test_reveal_same_block_reverts() public {
+        _registerProblem(alice, 1 ether, block.timestamp + 1 days);
+
+        int256[] memory vars = _makeVars(10);
+        bytes32 salt = bytes32(uint256(42));
+
+        bytes32 h = _commitHash(0, vars, salt);
+        vm.prank(bob);
+        coordinator.commit(h);
+
+        vm.prank(bob);
+        vm.expectRevert(Coordinator.RevealTooEarly.selector);
+        coordinator.revealDirect(0, NL_MIN_X, vars, salt);
     }
 
     // revealDirect

@@ -99,6 +99,9 @@ contract IndirectExperimentTest is Test {
         coordinator.commit(commitHash);
         emit log_named_uint("commit_gas", g - gasleft());
 
+        // Reveals must occur in a strictly later block than the commit.
+        vm.roll(block.number + 1);
+
         // Build mock proof
         bytes memory journal = _buildJournal(
             // forge-lint: disable-next-line(unsafe-typecast)

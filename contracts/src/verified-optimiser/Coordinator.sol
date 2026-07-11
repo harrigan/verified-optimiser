@@ -35,6 +35,7 @@ contract Coordinator is IERC5732 {
 
     struct Commitment {
         bytes32 commitHash;
+        uint64 blockNumber;
         bool revealed;
     }
 
@@ -58,6 +59,7 @@ contract Coordinator is IERC5732 {
     error NoCommitment();
     error AlreadyRevealed();
     error CommitmentMismatch();
+    error RevealTooEarly();
     error NlFileHashMismatch();
     error TransferFailed();
     error NoBounty();
@@ -95,11 +97,15 @@ contract Coordinator is IERC5732 {
         emit ProblemRegistered(problemId, nlFileHash, nlBlobHash, msg.value, deadline);
     }
 
-    /// @notice Commit a hashed solution (ERC-5732).
+    /// @notice Commit a hashed solution (ERC-5732).  The reveal must occur
+    ///         in a strictly later block; otherwise an observer of a pending
+    ///         reveal could copy the solution, commit, and reveal within the
+    ///         same block.
     /// @param _commitment keccak256(abi.encodePacked(problemId, solutionHash, salt))
     ///        where solutionHash = sha256(abi.encodePacked(vars)).
     function commit(bytes32 _commitment) external {
-        commitments[msg.sender] = Commitment({commitHash: _commitment, revealed: false});
+        commitments[msg.sender] =
+            Commitment({commitHash: _commitment, blockNumber: uint64(block.number), revealed: false});
 
         emit Commit(block.number, msg.sender, _commitment);
     }
@@ -203,6 +209,7 @@ contract Coordinator is IERC5732 {
         Commitment storage c = commitments[msg.sender];
         if (c.commitHash == bytes32(0)) revert NoCommitment();
         if (c.revealed) revert AlreadyRevealed();
+        if (block.number <= c.blockNumber) revert RevealTooEarly();
 
         // forge-lint: disable-next-line(asm-keccak256)
         bytes32 expected = keccak256(abi.encodePacked(problemId, solutionHash, salt));
