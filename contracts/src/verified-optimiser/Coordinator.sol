@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {NLVerifier} from "./NLVerifier.sol";
 import {IERC5732} from "./IERC5732.sol";
 import {IRiscZeroVerifier} from "risc0/IRiscZeroVerifier.sol";
+import {Steel} from "../steel/Steel.sol";
 
 /// @title Coordinator
 /// @notice Central contract for the indirect verification system.  Coordinates
@@ -157,12 +158,19 @@ contract Coordinator is IERC5732 {
         // Verify the Groth16 proof.
         ZK_VERIFIER.verify(seal, IMAGE_ID, sha256(journal));
 
-        // Decode journal: skip 96-byte Steel commitment, then payload.
-        // Layout after Steel commitment:
+        // Journal layout:
+        //   bytes   0..95:  Steel Commitment (3 x uint256, ABI-encoded)
+        // then payload:
         //   bytes   0..7:   objective as i64 LE
         //   bytes  8..135:  nlFileHash as 32 u32 LE words
         //   bytes 136..263: solutionHash as 32 u32 LE words
         require(journal.length >= 96 + 264, "journal too short");
+
+        // Validate the Steel commitment: the guest's EVM execution must have
+        // run against a block of this chain (and this chain's config).
+        // Without this check the prover can fabricate arbitrary EVM state.
+        Steel.Commitment memory commitment = abi.decode(journal[0:96], (Steel.Commitment));
+        require(Steel.validateCommitment(commitment), "invalid steel commitment");
 
         int256 objective = int256(int64(_readI64le(journal, 96)));
         bytes32 journalNlHash = _readHashFromWords(journal, 104);

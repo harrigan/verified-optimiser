@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {console} from "forge-std/console.sol";
 import {ControlID, RiscZeroGroth16Verifier} from "risc0/groth16/RiscZeroGroth16Verifier.sol";
+import {ChainSpec, Encoding, Steel} from "../steel/Steel.sol";
 import {CrossingCounterZKSteel} from "./CrossingCounterZKSteel.sol";
 
 /// @notice Gas benchmark for Steel crossing-count verification using real
@@ -31,6 +32,33 @@ contract GasBenchmarkZkSteelTest is Test {
         }
     }
 
+    /// @dev Prepare the local chain so that the Steel commitment embedded in
+    ///      a real proof journal validates: adopt the proof's chain config
+    ///      and recorded block hash.
+    function _adoptJournalEnvironment(bytes memory journal) internal {
+        bytes memory head = new bytes(96);
+        for (uint256 i = 0; i < 96; i++) {
+            head[i] = journal[i];
+        }
+        Steel.Commitment memory commitment = abi.decode(head, (Steel.Commitment));
+
+        uint256[3] memory chainIds = [uint256(1), 11155111, 17000];
+        uint256 chainId = 0;
+        for (uint256 i = 0; i < chainIds.length; i++) {
+            if (commitment.configID == ChainSpec.configID(chainIds[i])) {
+                chainId = chainIds[i];
+                break;
+            }
+        }
+        require(chainId != 0, "unknown steel config ID in journal");
+        vm.chainId(chainId);
+
+        (uint240 blockNumber, uint16 version) = Encoding.decodeVersionedID(commitment.id);
+        require(version == 0, "only block commitments supported in benchmark");
+        vm.roll(uint256(blockNumber) + 1);
+        vm.setBlockhash(blockNumber, commitment.digest);
+    }
+
     function test_benchmark() public {
         string memory dir = _fixturesDir();
         string memory manifestJson;
@@ -52,6 +80,8 @@ contract GasBenchmarkZkSteelTest is Test {
             bytes memory seal = abi.encodePacked(groth16Verifier.SELECTOR(), rawSeal);
 
             uint256 snapId = vm.snapshot();
+
+            _adoptJournalEnvironment(journal);
 
             uint256 gasBefore = gasleft();
             uint256 crossings = target.verify(seal, journal);

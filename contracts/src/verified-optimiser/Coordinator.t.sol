@@ -5,6 +5,7 @@ import {Coordinator} from "./Coordinator.sol";
 import {NLVerifier} from "./NLVerifier.sol";
 import {RiscZeroMockVerifier} from "risc0/test/RiscZeroMockVerifier.sol";
 import {Receipt as RiscZeroReceipt} from "risc0/IRiscZeroVerifier.sol";
+import {ChainSpec, Encoding, Steel} from "../steel/Steel.sol";
 import {Test} from "@forge-std/Test.sol";
 
 contract CoordinatorTest is Test {
@@ -24,6 +25,10 @@ contract CoordinatorTest is Test {
     bytes32 immutable NL_MIN_X_HASH = sha256(NL_MIN_X);
 
     function setUp() public {
+        // Steel commitment validation resolves the expected config ID from
+        // block.chainid; use a chain known to the ChainSpec library.
+        vm.chainId(1);
+
         imageId = bytes32(uint256(0x1234));
         nlVerifier = new NLVerifier();
         mockZk = new RiscZeroMockVerifier(bytes4(0));
@@ -280,17 +285,32 @@ contract CoordinatorTest is Test {
 
     // revealIndirect
 
-    /// @dev Build a journal matching the new layout:
-    ///      96 bytes Steel commitment (zeros for mock) +
+    /// @dev Build a version-0 (block hash) Steel commitment to the previous
+    ///      block that passes Steel.validateCommitment.
+    function _steelCommitment() internal returns (Steel.Commitment memory) {
+        uint256 blockNumber = block.number - 1;
+        bytes32 blockHash = keccak256(abi.encodePacked("blockhash", blockNumber));
+        vm.setBlockhash(blockNumber, blockHash);
+        return Steel.Commitment({
+            // forge-lint: disable-next-line(unsafe-typecast)
+            id: Encoding.encodeVersionedID(uint240(blockNumber), 0),
+            digest: blockHash,
+            configID: ChainSpec.configID(block.chainid)
+        });
+    }
+
+    /// @dev Build a journal matching the coordinator's layout:
+    ///      96 bytes Steel commitment (ABI-encoded) +
     ///      8 bytes objective (i64 LE) +
     ///      128 bytes nlFileHash (32 u32 LE words) +
     ///      128 bytes solutionHash (32 u32 LE words).
-    function _buildJournal(int64 objective, bytes32 nlFileHash, bytes32 solutionHash)
-        internal
-        pure
-        returns (bytes memory)
-    {
-        bytes memory j = new bytes(96 + 264);
+    function _buildJournal(
+        Steel.Commitment memory commitment,
+        int64 objective,
+        bytes32 nlFileHash,
+        bytes32 solutionHash
+    ) internal pure returns (bytes memory) {
+        bytes memory j = bytes.concat(abi.encode(commitment), new bytes(264));
 
         // forge-lint: disable-next-line(unsafe-typecast)
         uint64 objBits = uint64(objective);
@@ -328,7 +348,7 @@ contract CoordinatorTest is Test {
         _commitAs(bob, 0, vars, salt);
 
         // forge-lint: disable-next-line(unsafe-typecast)
-        journal = _buildJournal(int64(v), NL_MIN_X_HASH, solutionHash);
+        journal = _buildJournal(_steelCommitment(), int64(v), NL_MIN_X_HASH, solutionHash);
         seal = _mockSeal(journal);
     }
 
@@ -357,7 +377,7 @@ contract CoordinatorTest is Test {
 
         bytes32 solHash2 = sha256(abi.encodePacked(vars2));
         // forge-lint: disable-next-line(unsafe-typecast)
-        bytes memory journal2 = _buildJournal(int64(int256(50)), NL_MIN_X_HASH, solHash2);
+        bytes memory journal2 = _buildJournal(_steelCommitment(), int64(int256(50)), NL_MIN_X_HASH, solHash2);
         bytes memory seal2 = _mockSeal(journal2);
 
         vm.prank(carol);
@@ -378,7 +398,7 @@ contract CoordinatorTest is Test {
 
         // Journal with wrong NL file hash.
         bytes32 wrongNlHash = sha256("wrong");
-        bytes memory journal = _buildJournal(int64(int256(10)), wrongNlHash, solHash);
+        bytes memory journal = _buildJournal(_steelCommitment(), int64(int256(10)), wrongNlHash, solHash);
         bytes memory seal = _mockSeal(journal);
 
         vm.prank(bob);
@@ -391,7 +411,7 @@ contract CoordinatorTest is Test {
 
         // Build journal with wrong solution hash.
         bytes32 wrongSolHash = sha256(abi.encodePacked(_makeVars(999)));
-        bytes memory badJournal = _buildJournal(int64(int256(10)), NL_MIN_X_HASH, wrongSolHash);
+        bytes memory badJournal = _buildJournal(_steelCommitment(), int64(int256(10)), NL_MIN_X_HASH, wrongSolHash);
         bytes memory badSeal = _mockSeal(badJournal);
 
         vm.prank(bob);
@@ -435,6 +455,68 @@ contract CoordinatorTest is Test {
         coordinator.revealIndirect(0, seal, journal, solutionHash, salt);
     }
 
+    function test_revealIndirect_commitment_wrong_blockhash() public {
+        _registerProblem(alice, 1 ether, block.timestamp + 1 days);
+
+        int256[] memory vars = _makeVars(10);
+        bytes32 salt = bytes32(uint256(42));
+        bytes32 solHash = sha256(abi.encodePacked(vars));
+        _commitAs(bob, 0, vars, salt);
+
+        // Commitment digest does not match the chain's block hash.
+        Steel.Commitment memory commitment = _steelCommitment();
+        commitment.digest = keccak256("some other block");
+
+        bytes memory journal = _buildJournal(commitment, int64(int256(10)), NL_MIN_X_HASH, solHash);
+        bytes memory seal = _mockSeal(journal);
+
+        vm.prank(bob);
+        vm.expectRevert("invalid steel commitment");
+        coordinator.revealIndirect(0, seal, journal, solHash, salt);
+    }
+
+    function test_revealIndirect_commitment_wrong_configID() public {
+        _registerProblem(alice, 1 ether, block.timestamp + 1 days);
+
+        int256[] memory vars = _makeVars(10);
+        bytes32 salt = bytes32(uint256(42));
+        bytes32 solHash = sha256(abi.encodePacked(vars));
+        _commitAs(bob, 0, vars, salt);
+
+        // Commitment carries the config of a different chain (Sepolia).
+        Steel.Commitment memory commitment = _steelCommitment();
+        commitment.configID = ChainSpec.configID(11155111);
+
+        bytes memory journal = _buildJournal(commitment, int64(int256(10)), NL_MIN_X_HASH, solHash);
+        bytes memory seal = _mockSeal(journal);
+
+        vm.prank(bob);
+        vm.expectRevert(
+            abi.encodeWithSelector(Steel.InvalidConfigID.selector, ChainSpec.configID(1), ChainSpec.configID(11155111))
+        );
+        coordinator.revealIndirect(0, seal, journal, solHash, salt);
+    }
+
+    function test_revealIndirect_commitment_too_old() public {
+        _registerProblem(alice, 1 ether, block.timestamp + 1 days);
+
+        int256[] memory vars = _makeVars(10);
+        bytes32 salt = bytes32(uint256(42));
+        bytes32 solHash = sha256(abi.encodePacked(vars));
+        _commitAs(bob, 0, vars, salt);
+
+        Steel.Commitment memory commitment = _steelCommitment();
+        bytes memory journal = _buildJournal(commitment, int64(int256(10)), NL_MIN_X_HASH, solHash);
+        bytes memory seal = _mockSeal(journal);
+
+        // The committed block falls out of the 256-block blockhash window.
+        vm.roll(block.number + 300);
+
+        vm.prank(bob);
+        vm.expectRevert(Steel.CommitmentTooOld.selector);
+        coordinator.revealIndirect(0, seal, journal, solHash, salt);
+    }
+
     function test_revealIndirect_negative_objective() public {
         _registerProblem(alice, 1 ether, block.timestamp + 1 days);
 
@@ -443,7 +525,7 @@ contract CoordinatorTest is Test {
         bytes32 solHash = sha256(abi.encodePacked(vars));
         _commitAs(bob, 0, vars, salt);
 
-        bytes memory journal = _buildJournal(int64(-50), NL_MIN_X_HASH, solHash);
+        bytes memory journal = _buildJournal(_steelCommitment(), int64(-50), NL_MIN_X_HASH, solHash);
         bytes memory seal = _mockSeal(journal);
 
         vm.prank(bob);

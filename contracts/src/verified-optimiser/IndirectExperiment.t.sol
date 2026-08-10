@@ -5,6 +5,7 @@ import {Coordinator} from "./Coordinator.sol";
 import {NLVerifier} from "./NLVerifier.sol";
 import {RiscZeroMockVerifier} from "risc0/test/RiscZeroMockVerifier.sol";
 import {Receipt as RiscZeroReceipt} from "risc0/IRiscZeroVerifier.sol";
+import {ChainSpec, Encoding, Steel} from "../steel/Steel.sol";
 import {Test} from "@forge-std/Test.sol";
 
 /// @notice Gas benchmark for the full indirect verification flow using the
@@ -16,21 +17,40 @@ contract IndirectExperimentTest is Test {
     address solver;
 
     function setUp() public {
+        // Steel commitment validation resolves the expected config ID from
+        // block.chainid; use a chain known to the ChainSpec library.
+        vm.chainId(1);
+
         owner = makeAddr("Owner");
         solver = makeAddr("Solver");
     }
 
+    /// @dev Build a version-0 (block hash) Steel commitment to the previous
+    ///      block that passes Steel.validateCommitment.
+    function _steelCommitment() internal returns (Steel.Commitment memory) {
+        uint256 blockNumber = block.number - 1;
+        bytes32 blockHash = keccak256(abi.encodePacked("blockhash", blockNumber));
+        vm.setBlockhash(blockNumber, blockHash);
+        return Steel.Commitment({
+            // forge-lint: disable-next-line(unsafe-typecast)
+            id: Encoding.encodeVersionedID(uint240(blockNumber), 0),
+            digest: blockHash,
+            configID: ChainSpec.configID(block.chainid)
+        });
+    }
+
     /// @dev Build a journal matching the coordinator's layout:
-    ///      96 bytes Steel commitment (zeros) +
+    ///      96 bytes Steel commitment (ABI-encoded) +
     ///      8 bytes objective (i64 LE) +
     ///      128 bytes nlFileHash (32 u32 LE words) +
     ///      128 bytes solutionHash (32 u32 LE words).
-    function _buildJournal(int64 objective, bytes32 nlFileHash, bytes32 solutionHash)
-        internal
-        pure
-        returns (bytes memory)
-    {
-        bytes memory j = new bytes(96 + 264);
+    function _buildJournal(
+        Steel.Commitment memory commitment,
+        int64 objective,
+        bytes32 nlFileHash,
+        bytes32 solutionHash
+    ) internal pure returns (bytes memory) {
+        bytes memory j = bytes.concat(abi.encode(commitment), new bytes(264));
 
         // forge-lint: disable-next-line(unsafe-typecast)
         uint64 objBits = uint64(objective);
@@ -104,6 +124,7 @@ contract IndirectExperimentTest is Test {
 
         // Build mock proof
         bytes memory journal = _buildJournal(
+            _steelCommitment(),
             // forge-lint: disable-next-line(unsafe-typecast)
             int64(expectedObjective),
             nlFileHash,
