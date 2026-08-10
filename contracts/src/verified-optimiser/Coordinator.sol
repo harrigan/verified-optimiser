@@ -164,7 +164,8 @@ contract Coordinator is IERC5732 {
         //   bytes   0..7:   objective as i64 LE
         //   bytes  8..135:  nlFileHash as 32 u32 LE words
         //   bytes 136..263: solutionHash as 32 u32 LE words
-        require(journal.length >= 96 + 264, "journal too short");
+        //   bytes 264..343: verifier address as 20 u32 LE words
+        require(journal.length >= 96 + 344, "journal too short");
 
         // Validate the Steel commitment: the guest's EVM execution must have
         // run against a block of this chain (and this chain's config).
@@ -175,9 +176,14 @@ contract Coordinator is IERC5732 {
         int256 objective = int256(int64(_readI64le(journal, 96)));
         bytes32 journalNlHash = _readHashFromWords(journal, 104);
         bytes32 journalSolHash = _readHashFromWords(journal, 232);
+        address journalVerifier = _readAddressFromWords(journal, 360);
 
         require(journalNlHash == p.nlFileHash, "nl file hash mismatch");
         require(journalSolHash == solutionHash, "solution hash mismatch");
+        // The guest commits the address of the contract it executed; without
+        // this check the prover could run any contract with a matching
+        // selector instead of the canonical NLVerifier.
+        require(journalVerifier == address(NL_VERIFIER), "verifier address mismatch");
 
         bool improved = p.isMin ? objective < p.bestObjective : objective > p.bestObjective;
 
@@ -251,5 +257,13 @@ contract Coordinator is IERC5732 {
         for (uint256 i = 0; i < 32; i++) {
             h |= bytes32(uint256(uint8(data[offset + i * 4])) << (248 - 8 * i));
         }
+    }
+
+    function _readAddressFromWords(bytes calldata data, uint256 offset) internal pure returns (address a) {
+        uint160 v;
+        for (uint256 i = 0; i < 20; i++) {
+            v |= uint160(uint8(data[offset + i * 4])) << (152 - 8 * i);
+        }
+        a = address(v);
     }
 }

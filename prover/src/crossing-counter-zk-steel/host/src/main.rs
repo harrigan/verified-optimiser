@@ -37,6 +37,7 @@ struct GuestInput {
 struct VerifyOutput {
     crossing_count: u64,
     input_hash: [u8; 32],
+    contract_address: [u8; 20],
 }
 
 #[derive(Deserialize)]
@@ -225,7 +226,7 @@ async fn main() {
         // Decode the journal: skip 96-byte Steel commitment, then decode VerifyOutput.
         let journal_bytes = &receipt.journal.bytes;
         assert!(
-            journal_bytes.len() >= 96 + 136,
+            journal_bytes.len() >= 96 + 216,
             "journal too short: {} bytes",
             journal_bytes.len()
         );

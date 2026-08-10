@@ -303,14 +303,16 @@ contract CoordinatorTest is Test {
     ///      96 bytes Steel commitment (ABI-encoded) +
     ///      8 bytes objective (i64 LE) +
     ///      128 bytes nlFileHash (32 u32 LE words) +
-    ///      128 bytes solutionHash (32 u32 LE words).
+    ///      128 bytes solutionHash (32 u32 LE words) +
+    ///      80 bytes verifier address (20 u32 LE words).
     function _buildJournal(
         Steel.Commitment memory commitment,
         int64 objective,
         bytes32 nlFileHash,
-        bytes32 solutionHash
+        bytes32 solutionHash,
+        address verifier
     ) internal pure returns (bytes memory) {
-        bytes memory j = bytes.concat(abi.encode(commitment), new bytes(264));
+        bytes memory j = bytes.concat(abi.encode(commitment), new bytes(344));
 
         // forge-lint: disable-next-line(unsafe-typecast)
         uint64 objBits = uint64(objective);
@@ -325,6 +327,11 @@ contract CoordinatorTest is Test {
 
         for (uint256 i = 0; i < 32; i++) {
             j[232 + i * 4] = solutionHash[i];
+        }
+
+        for (uint256 i = 0; i < 20; i++) {
+            // forge-lint: disable-next-line(unsafe-typecast)
+            j[360 + i * 4] = bytes1(uint8(uint160(verifier) >> (152 - 8 * i)));
         }
 
         return j;
@@ -348,7 +355,7 @@ contract CoordinatorTest is Test {
         _commitAs(bob, 0, vars, salt);
 
         // forge-lint: disable-next-line(unsafe-typecast)
-        journal = _buildJournal(_steelCommitment(), int64(v), NL_MIN_X_HASH, solutionHash);
+        journal = _buildJournal(_steelCommitment(), int64(v), NL_MIN_X_HASH, solutionHash, address(nlVerifier));
         seal = _mockSeal(journal);
     }
 
@@ -377,7 +384,7 @@ contract CoordinatorTest is Test {
 
         bytes32 solHash2 = sha256(abi.encodePacked(vars2));
         // forge-lint: disable-next-line(unsafe-typecast)
-        bytes memory journal2 = _buildJournal(_steelCommitment(), int64(int256(50)), NL_MIN_X_HASH, solHash2);
+        bytes memory journal2 = _buildJournal(_steelCommitment(), int64(int256(50)), NL_MIN_X_HASH, solHash2, address(nlVerifier));
         bytes memory seal2 = _mockSeal(journal2);
 
         vm.prank(carol);
@@ -398,7 +405,7 @@ contract CoordinatorTest is Test {
 
         // Journal with wrong NL file hash.
         bytes32 wrongNlHash = sha256("wrong");
-        bytes memory journal = _buildJournal(_steelCommitment(), int64(int256(10)), wrongNlHash, solHash);
+        bytes memory journal = _buildJournal(_steelCommitment(), int64(int256(10)), wrongNlHash, solHash, address(nlVerifier));
         bytes memory seal = _mockSeal(journal);
 
         vm.prank(bob);
@@ -411,7 +418,7 @@ contract CoordinatorTest is Test {
 
         // Build journal with wrong solution hash.
         bytes32 wrongSolHash = sha256(abi.encodePacked(_makeVars(999)));
-        bytes memory badJournal = _buildJournal(_steelCommitment(), int64(int256(10)), NL_MIN_X_HASH, wrongSolHash);
+        bytes memory badJournal = _buildJournal(_steelCommitment(), int64(int256(10)), NL_MIN_X_HASH, wrongSolHash, address(nlVerifier));
         bytes memory badSeal = _mockSeal(badJournal);
 
         vm.prank(bob);
@@ -467,7 +474,7 @@ contract CoordinatorTest is Test {
         Steel.Commitment memory commitment = _steelCommitment();
         commitment.digest = keccak256("some other block");
 
-        bytes memory journal = _buildJournal(commitment, int64(int256(10)), NL_MIN_X_HASH, solHash);
+        bytes memory journal = _buildJournal(commitment, int64(int256(10)), NL_MIN_X_HASH, solHash, address(nlVerifier));
         bytes memory seal = _mockSeal(journal);
 
         vm.prank(bob);
@@ -487,7 +494,7 @@ contract CoordinatorTest is Test {
         Steel.Commitment memory commitment = _steelCommitment();
         commitment.configID = ChainSpec.configID(11155111);
 
-        bytes memory journal = _buildJournal(commitment, int64(int256(10)), NL_MIN_X_HASH, solHash);
+        bytes memory journal = _buildJournal(commitment, int64(int256(10)), NL_MIN_X_HASH, solHash, address(nlVerifier));
         bytes memory seal = _mockSeal(journal);
 
         vm.prank(bob);
@@ -506,7 +513,7 @@ contract CoordinatorTest is Test {
         _commitAs(bob, 0, vars, salt);
 
         Steel.Commitment memory commitment = _steelCommitment();
-        bytes memory journal = _buildJournal(commitment, int64(int256(10)), NL_MIN_X_HASH, solHash);
+        bytes memory journal = _buildJournal(commitment, int64(int256(10)), NL_MIN_X_HASH, solHash, address(nlVerifier));
         bytes memory seal = _mockSeal(journal);
 
         // The committed block falls out of the 256-block blockhash window.
@@ -514,6 +521,25 @@ contract CoordinatorTest is Test {
 
         vm.prank(bob);
         vm.expectRevert(Steel.CommitmentTooOld.selector);
+        coordinator.revealIndirect(0, seal, journal, solHash, salt);
+    }
+
+    function test_revealIndirect_verifier_address_mismatch() public {
+        _registerProblem(alice, 1 ether, block.timestamp + 1 days);
+
+        int256[] memory vars = _makeVars(10);
+        bytes32 salt = bytes32(uint256(42));
+        bytes32 solHash = sha256(abi.encodePacked(vars));
+        _commitAs(bob, 0, vars, salt);
+
+        // Journal claims the guest executed some other contract, e.g. an
+        // attacker-deployed verifier that always returns a good objective.
+        address fakeVerifier = makeAddr("FakeVerifier");
+        bytes memory journal = _buildJournal(_steelCommitment(), int64(int256(10)), NL_MIN_X_HASH, solHash, fakeVerifier);
+        bytes memory seal = _mockSeal(journal);
+
+        vm.prank(bob);
+        vm.expectRevert("verifier address mismatch");
         coordinator.revealIndirect(0, seal, journal, solHash, salt);
     }
 
@@ -525,7 +551,7 @@ contract CoordinatorTest is Test {
         bytes32 solHash = sha256(abi.encodePacked(vars));
         _commitAs(bob, 0, vars, salt);
 
-        bytes memory journal = _buildJournal(_steelCommitment(), int64(-50), NL_MIN_X_HASH, solHash);
+        bytes memory journal = _buildJournal(_steelCommitment(), int64(-50), NL_MIN_X_HASH, solHash, address(nlVerifier));
         bytes memory seal = _mockSeal(journal);
 
         vm.prank(bob);

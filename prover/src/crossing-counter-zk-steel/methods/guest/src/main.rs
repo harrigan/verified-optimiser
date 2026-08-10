@@ -36,11 +36,14 @@ struct VerifyInput {
     is_complete: bool,
 }
 
-/// Output committed to the journal (same format as existing guest).
+/// Output committed to the journal.  Extends the existing guest's format
+/// with the address of the CrossingCounter contract that was executed,
+/// binding the proof to that exact deployment.
 #[derive(Serialize, Deserialize)]
 struct VerifyOutput {
     crossing_count: u64,
     input_hash: [u8; 32],
+    contract_address: [u8; 20],
 }
 
 fn main() {
@@ -93,10 +96,12 @@ fn main() {
     let digest = Sha256::hash_bytes(&input_bytes);
     let input_hash: [u8; 32] = digest.as_bytes().try_into().unwrap();
 
-    // 8. Commit output (same risc0-serde format as existing guest).
+    // 8. Commit output.  The contract address binds the proof to the exact
+    //    CrossingCounter deployment whose bytecode was executed.
     let output = VerifyOutput {
         crossing_count,
         input_hash,
+        contract_address: guest_input.contract_address,
     };
     env::commit(&output);
 }

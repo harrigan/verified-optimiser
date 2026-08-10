@@ -52,11 +52,14 @@ fn main() {
     let sol_digest = Sha256::hash_bytes(&input_bytes);
     let solution_hash: [u8; 32] = sol_digest.as_bytes().try_into().unwrap();
 
-    // 9. Commit output.
+    // 9. Commit output.  The contract address binds the proof to the exact
+    //    NLVerifier deployment whose bytecode was executed; the coordinator
+    //    checks it against its own NL_VERIFIER.
     let output = VerifyOutput {
         objective,
         nl_file_hash,
         solution_hash,
+        contract_address: guest_input.contract_address,
     };
     env::commit(&output);
 }

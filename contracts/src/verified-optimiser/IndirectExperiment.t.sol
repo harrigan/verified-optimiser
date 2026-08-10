@@ -43,14 +43,16 @@ contract IndirectExperimentTest is Test {
     ///      96 bytes Steel commitment (ABI-encoded) +
     ///      8 bytes objective (i64 LE) +
     ///      128 bytes nlFileHash (32 u32 LE words) +
-    ///      128 bytes solutionHash (32 u32 LE words).
+    ///      128 bytes solutionHash (32 u32 LE words) +
+    ///      80 bytes verifier address (20 u32 LE words).
     function _buildJournal(
         Steel.Commitment memory commitment,
         int64 objective,
         bytes32 nlFileHash,
-        bytes32 solutionHash
+        bytes32 solutionHash,
+        address verifier
     ) internal pure returns (bytes memory) {
-        bytes memory j = bytes.concat(abi.encode(commitment), new bytes(264));
+        bytes memory j = bytes.concat(abi.encode(commitment), new bytes(344));
 
         // forge-lint: disable-next-line(unsafe-typecast)
         uint64 objBits = uint64(objective);
@@ -65,6 +67,11 @@ contract IndirectExperimentTest is Test {
 
         for (uint256 i = 0; i < 32; i++) {
             j[232 + i * 4] = solutionHash[i];
+        }
+
+        for (uint256 i = 0; i < 20; i++) {
+            // forge-lint: disable-next-line(unsafe-typecast)
+            j[360 + i * 4] = bytes1(uint8(uint160(verifier) >> (152 - 8 * i)));
         }
 
         return j;
@@ -128,7 +135,8 @@ contract IndirectExperimentTest is Test {
             // forge-lint: disable-next-line(unsafe-typecast)
             int64(expectedObjective),
             nlFileHash,
-            solutionHash
+            solutionHash,
+            address(nlVerifier)
         );
         RiscZeroReceipt memory receipt = mockZk.mockProve(imageId, sha256(journal));
 

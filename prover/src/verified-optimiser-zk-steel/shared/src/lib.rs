@@ -24,9 +24,11 @@ pub struct GuestInput {
 ///   i64 LE: objective (2 u32 words)
 ///   32 x u32 LE: nl_file_hash bytes (sha256 of NL file)
 ///   32 x u32 LE: solution_hash bytes (sha256 of ABI-encoded vars)
+///   20 x u32 LE: contract_address bytes (the NLVerifier the guest called)
 #[derive(Serialize, Deserialize)]
 pub struct VerifyOutput {
     pub objective: i64,
     pub nl_file_hash: [u8; 32],
     pub solution_hash: [u8; 32],
+    pub contract_address: [u8; 20],
 }

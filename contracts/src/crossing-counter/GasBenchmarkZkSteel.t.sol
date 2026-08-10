@@ -20,16 +20,25 @@ contract GasBenchmarkZkSteelTest is Test {
     }
 
     RiscZeroGroth16Verifier private groth16Verifier;
-    CrossingCounterZKSteel private target;
+    bytes32 private imageId;
 
     function setUp() public {
         try vm.readFile(string.concat(PROOFS_DIR, "image_id.txt")) returns (string memory idHex) {
-            bytes32 imageId = vm.parseBytes32(idHex);
+            imageId = vm.parseBytes32(idHex);
             groth16Verifier = new RiscZeroGroth16Verifier(ControlID.CONTROL_ROOT, ControlID.BN254_CONTROL_ID);
-            target = new CrossingCounterZKSteel(groth16Verifier, imageId);
         } catch {
             vm.skip(true);
         }
+    }
+
+    /// @dev Read the CrossingCounter address the guest committed at journal
+    ///      offset 232 (20 u32 LE words, address byte in the low position).
+    function _journalContractAddress(bytes memory journal) internal pure returns (address a) {
+        uint160 v;
+        for (uint256 i = 0; i < 20; i++) {
+            v |= uint160(uint8(journal[232 + i * 4])) << (152 - 8 * i);
+        }
+        a = address(v);
     }
 
     /// @dev Prepare the local chain so that the Steel commitment embedded in
@@ -82,6 +91,11 @@ contract GasBenchmarkZkSteelTest is Test {
             uint256 snapId = vm.snapshot();
 
             _adoptJournalEnvironment(journal);
+
+            // Pin the target to the CrossingCounter deployment the proof was
+            // generated against, taken from the proof's own journal.
+            CrossingCounterZKSteel target =
+                new CrossingCounterZKSteel(groth16Verifier, imageId, _journalContractAddress(journal));
 
             uint256 gasBefore = gasleft();
             uint256 crossings = target.verify(seal, journal);
