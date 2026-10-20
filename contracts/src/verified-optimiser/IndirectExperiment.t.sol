@@ -119,7 +119,7 @@ contract IndirectExperimentTest is Test {
         // Commit
         bytes32 salt = bytes32(uint256(42));
         bytes32 solutionHash = sha256(abi.encodePacked(vars));
-        bytes32 commitHash = keccak256(abi.encodePacked(problemId, solutionHash, salt));
+        bytes32 commitHash = keccak256(abi.encodePacked(solver, problemId, solutionHash, salt));
 
         vm.prank(solver);
         g = gasleft();

@@ -102,8 +102,11 @@ contract Coordinator is IERC5732 {
     ///         in a strictly later block; otherwise an observer of a pending
     ///         reveal could copy the solution, commit, and reveal within the
     ///         same block.
-    /// @param _commitment keccak256(abi.encodePacked(problemId, solutionHash, salt))
-    ///        where solutionHash = sha256(abi.encodePacked(vars)).
+    /// @param _commitment keccak256(abi.encodePacked(committer, problemId,
+    ///        solutionHash, salt)) where committer is the address that commits
+    ///        and reveals, and solutionHash = sha256(abi.encodePacked(vars)).
+    ///        Binding the committer stops anyone from copying a commitment and
+    ///        front-running its reveal.
     function commit(bytes32 _commitment) external {
         commitments[msg.sender] =
             Commitment({commitHash: _commitment, blockNumber: uint64(block.number), revealed: false});
@@ -226,7 +229,7 @@ contract Coordinator is IERC5732 {
         if (block.number <= c.blockNumber) revert RevealTooEarly();
 
         // forge-lint: disable-next-line(asm-keccak256)
-        bytes32 expected = keccak256(abi.encodePacked(problemId, solutionHash, salt));
+        bytes32 expected = keccak256(abi.encodePacked(msg.sender, problemId, solutionHash, salt));
         if (expected != c.commitHash) revert CommitmentMismatch();
 
         c.revealed = true;

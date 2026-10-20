@@ -63,12 +63,16 @@ contract CoordinatorTest is Test {
         return vars;
     }
 
-    function _commitHash(uint256 problemId, int256[] memory vars, bytes32 salt) internal pure returns (bytes32) {
-        return keccak256(abi.encodePacked(problemId, sha256(abi.encodePacked(vars)), salt));
+    function _commitHash(address committer, uint256 problemId, int256[] memory vars, bytes32 salt)
+        internal
+        pure
+        returns (bytes32)
+    {
+        return keccak256(abi.encodePacked(committer, problemId, sha256(abi.encodePacked(vars)), salt));
     }
 
     function _commitAs(address sender, uint256 problemId, int256[] memory vars, bytes32 salt) internal {
-        bytes32 h = _commitHash(problemId, vars, salt);
+        bytes32 h = _commitHash(sender, problemId, vars, salt);
         vm.prank(sender);
         coordinator.commit(h);
         // Reveals must occur in a strictly later block than the commit.
@@ -118,7 +122,7 @@ contract CoordinatorTest is Test {
         _commitAs(bob, 0, vars, salt);
 
         (bytes32 ch, uint64 blockNumber, bool revealed) = coordinator.commitments(bob);
-        assertEq(ch, _commitHash(0, vars, salt));
+        assertEq(ch, _commitHash(bob, 0, vars, salt));
         assertEq(blockNumber, uint64(block.number - 1));
         assertFalse(revealed);
     }
@@ -129,13 +133,39 @@ contract CoordinatorTest is Test {
         int256[] memory vars = _makeVars(10);
         bytes32 salt = bytes32(uint256(42));
 
-        bytes32 h = _commitHash(0, vars, salt);
+        bytes32 h = _commitHash(bob, 0, vars, salt);
         vm.prank(bob);
         coordinator.commit(h);
 
         vm.prank(bob);
         vm.expectRevert(Coordinator.RevealTooEarly.selector);
         coordinator.revealDirect(0, NL_MIN_X, vars, salt);
+    }
+
+    function test_copied_commitment_cannot_be_revealed() public {
+        _registerProblem(alice, 1 ether, block.timestamp + 1 days);
+
+        int256[] memory vars = _makeVars(10);
+        bytes32 salt = bytes32(uint256(42));
+
+        // Carol copies Bob's commitment hash and later front-runs his
+        // reveal with the solution and salt it exposes.
+        bytes32 h = _commitHash(bob, 0, vars, salt);
+        vm.prank(bob);
+        coordinator.commit(h);
+        vm.prank(carol);
+        coordinator.commit(h);
+        vm.roll(block.number + 1);
+
+        vm.prank(carol);
+        vm.expectRevert(Coordinator.CommitmentMismatch.selector);
+        coordinator.revealDirect(0, NL_MIN_X, vars, salt);
+
+        vm.prank(bob);
+        coordinator.revealDirect(0, NL_MIN_X, vars, salt);
+
+        (,,,,,, address bestSolver,,,) = coordinator.problems(0);
+        assertEq(bestSolver, bob);
     }
 
     // revealDirect
